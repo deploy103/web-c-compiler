@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import {
   Activity,
@@ -54,13 +54,14 @@ int main(void) {
 
 function App() {
   const [code, setCode] = useState(starterCode);
-  const [stdin, setStdin] = useState("10 32\n");
+  const [stdin, setStdin] = useState("");
   const [standard, setStandard] = useState("c11");
   const [compiler, setCompiler] = useState("gcc");
   const [health, setHealth] = useState(null);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [selectedExample, setSelectedExample] = useState("sum");
+  const stdinRef = useRef(null);
 
   useEffect(() => {
     refreshHealth();
@@ -82,6 +83,12 @@ function App() {
   }
 
   async function submit(mode) {
+    if (mode === "run" && usesScanf(code) && stdin.length === 0) {
+      setResult({ ok: false, error: "scanf 입력이 필요합니다. stdin 칸에 값을 직접 입력한 뒤 실행하세요." });
+      stdinRef.current?.focus();
+      return;
+    }
+
     setBusy(true);
     setResult(null);
 
@@ -104,9 +111,7 @@ function App() {
   function loadExample(key) {
     setSelectedExample(key);
     setCode(examples[key]);
-    if (key === "sum") setStdin("10 32\n");
-    if (key === "loop") setStdin("");
-    if (key === "string") setStdin("KST\n");
+    setStdin("");
   }
 
   const StatusIcon = status.icon;
@@ -195,8 +200,10 @@ function App() {
               <span>stdin</span>
             </div>
             <textarea
+              ref={stdinRef}
               value={stdin}
               onChange={(event) => setStdin(event.target.value)}
+              placeholder="scanf 입력값을 여기에 직접 입력하세요."
               spellCheck="false"
               aria-label="표준 입력"
             />
@@ -253,6 +260,10 @@ function Output({ result, health }) {
 
 function byteLength(value) {
   return new TextEncoder().encode(value).length;
+}
+
+function usesScanf(value) {
+  return /\bscanf\s*\(/.test(value);
 }
 
 export default App;
