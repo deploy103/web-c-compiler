@@ -56,6 +56,7 @@ function App() {
   const [code, setCode] = useState(starterCode);
   const [stdin, setStdin] = useState("10 32\n");
   const [standard, setStandard] = useState("c11");
+  const [compiler, setCompiler] = useState("gcc");
   const [health, setHealth] = useState(null);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -88,7 +89,7 @@ function App() {
       const response = await fetch("/api/compile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, stdin, mode, standard })
+        body: JSON.stringify({ code, stdin, mode, standard, compiler })
       });
       const body = await response.json();
       setResult({ ...body, httpStatus: response.status });
@@ -129,6 +130,12 @@ function App() {
       <main className="workspace">
         <section className="editor-pane" aria-label="C 코드 편집기">
           <div className="toolbar">
+            <div className="control-group">
+              <label htmlFor="compiler">컴파일러</label>
+              <select id="compiler" value={compiler} onChange={(event) => setCompiler(event.target.value)}>
+                <option value="gcc">Server GCC</option>
+              </select>
+            </div>
             <div className="control-group">
               <label htmlFor="standard">표준</label>
               <select id="standard" value={standard} onChange={(event) => setStandard(event.target.value)}>
@@ -227,6 +234,7 @@ function Output({ result, health }) {
   const stderr = result.stderr || "";
   const meta = [
     `runner: ${result.runner}`,
+    `compiler: ${result.compiler || "n/a"}`,
     `exit: ${result.exitCode ?? "n/a"}`,
     result.timedOut ? "timeout: yes" : null
   ]

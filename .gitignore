@@ -2,6 +2,10 @@ node_modules/
 dist/
 .runs/
 .env
+server.txt
+서버작업.md
+deploy/
+.deploy/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
