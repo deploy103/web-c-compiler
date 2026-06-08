@@ -152,8 +152,7 @@ button:disabled {
 
 .editor-pane,
 .side-pane,
-.stdin-panel,
-.output-panel {
+.console-panel {
   min-height: 0;
 }
 
@@ -230,19 +229,14 @@ select {
 
 .side-pane {
   display: grid;
-  grid-template-rows: minmax(150px, 34%) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   background: #181818;
 }
 
-.stdin-panel,
-.output-panel {
+.console-panel {
   display: grid;
-  grid-template-rows: 40px minmax(0, 1fr);
-  border-bottom: 1px solid #343434;
-}
-
-.output-panel {
-  border-bottom: 0;
+  grid-template-rows: 40px minmax(0, 1fr) 54px;
+  min-height: 0;
 }
 
 .panel-title {
@@ -262,6 +256,39 @@ select {
   color: #58a6ff;
 }
 
+.panel-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.run-state {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  padding: 0 8px;
+  color: #d7d7d7;
+  background: #1b1b1b;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.run-state.running {
+  border-color: rgba(36, 192, 111, 0.45);
+  color: #b8f2d1;
+}
+
+.run-state.compiling,
+.run-state.connecting {
+  border-color: rgba(247, 215, 132, 0.42);
+  color: #f7d784;
+}
+
 textarea {
   width: 100%;
   min-width: 0;
@@ -277,83 +304,72 @@ textarea {
   line-height: 1.5;
 }
 
-.busy-dot,
 .duration {
-  margin-left: auto;
-  color: #f7d784;
+  color: #b9b9b9;
   font-size: 12px;
   font-weight: 700;
 }
 
-.duration {
-  color: #b9b9b9;
-}
-
-.empty-output {
-  display: grid;
-  place-items: center;
-  min-height: 0;
-  padding: 18px;
-  color: #a7a7a7;
-  text-align: center;
-  line-height: 1.45;
-}
-
-.output-stack {
+.console-output {
   min-height: 0;
   overflow: auto;
   padding: 12px;
   background: #111111;
-}
-
-.output {
-  width: 100%;
-  min-height: 42px;
-  margin: 0 0 10px;
-  overflow: auto;
-  border: 1px solid #303030;
-  border-radius: 8px;
-  padding: 11px;
+  margin: 0;
   color: #f4f4f4;
-  background: #171717;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.output.error,
-.output.stderr {
-  border-color: rgba(224, 122, 95, 0.48);
+.console-muted,
+.console-meta {
+  color: #a7a7a7;
+}
+
+.console-system {
+  color: #d5d5d5;
+}
+
+.console-stdin {
+  color: #9ee6b8;
+}
+
+.console-stderr,
+.console-error {
   color: #ffd2c7;
 }
 
-.output.meta {
-  min-height: 0;
-  color: #bcbcbc;
-}
-
-.result-chip {
-  display: inline-flex;
+.console-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px 34px;
   align-items: center;
-  height: 26px;
-  margin-bottom: 10px;
-  border: 1px solid #3a3a3a;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border-top: 1px solid #303030;
+  background: #1d1d1d;
+}
+
+.console-input {
+  height: 36px;
+  min-height: 36px;
+  border: 1px solid #3d3d3d;
   border-radius: 8px;
-  padding: 0 10px;
-  font-size: 12px;
-  font-weight: 800;
+  padding: 8px 10px;
+  background: #141414;
+  line-height: 1.35;
 }
 
-.result-chip.ok {
-  border-color: rgba(36, 192, 111, 0.45);
-  color: #b8f2d1;
+.console-input:focus {
+  border-color: #58a6ff;
 }
 
-.result-chip.fail {
-  border-color: rgba(224, 122, 95, 0.52);
-  color: #ffd0c3;
+.console-input:disabled {
+  color: #8f8f8f;
+  background: #171717;
 }
 
 @media (max-width: 860px) {
@@ -374,7 +390,7 @@ textarea {
   }
 
   .side-pane {
-    grid-template-rows: 180px minmax(260px, 1fr);
+    grid-template-rows: minmax(320px, 1fr);
   }
 
   .toolbar {

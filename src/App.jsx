@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import {
   Activity,
-  CheckCircle2,
   FileCode2,
   Hammer,
   Play,
   RefreshCcw,
+  Send,
   Shield,
+  Square,
   Terminal,
   XCircle
 } from "lucide-react";
@@ -17,8 +18,9 @@ const starterCode = `#include <stdio.h>
 int main(void) {
     int a, b;
 
+    printf("두 정수를 입력하세요: ");
     if (scanf("%d %d", &a, &b) != 2) {
-        puts("두 정수를 입력하세요.");
+        puts("입력이 올바르지 않습니다.");
         return 0;
     }
 
@@ -43,8 +45,50 @@ int main(void) {
 int main(void) {
     char name[64];
 
+    printf("이름을 입력하세요: ");
     if (scanf("%63s", name) == 1) {
         printf("Hello, %s!\\n", name);
+    }
+
+    return 0;
+}
+`,
+  fuel: `#include <stdio.h>
+
+int main(void) {
+    int type;
+    float distance, kpl = 0, fuel = 0, total;
+
+    while (1) {
+        printf("차 종류를 선택하세요.(프로그램을 종료하려면 0을 입력하세요.)\\n");
+        printf("  1. 전기차, 2. 휘발유차, 3. LPG\\n");
+
+        if (scanf("%d", &type) != 1) {
+            puts("\\n입력이 끝나 프로그램을 종료합니다.");
+            break;
+        }
+        if (type == 0) {
+            puts("프로그램을 종료합니다.");
+            break;
+        }
+
+        printf("목적지까지 거리를 입력하세요.(km): ");
+        if (scanf("%f", &distance) != 1) {
+            puts("\\n거리가 입력되지 않아 프로그램을 종료합니다.");
+            break;
+        }
+
+        switch (type) {
+            case 1: kpl = 6; fuel = 220; break;
+            case 2: kpl = 16; fuel = 1650; break;
+            case 3: kpl = 10; fuel = 850; break;
+            default:
+                puts("지원하지 않는 차종입니다.");
+                continue;
+        }
+
+        total = fuel * distance / kpl;
+        printf("해당 차종의 예상 충전 비용은 %.0f원입니다.\\n\\n", total);
     }
 
     return 0;
@@ -52,20 +96,44 @@ int main(void) {
 `
 };
 
+const runStateLabels = {
+  idle: "대기",
+  connecting: "연결 중",
+  compiling: "컴파일 중",
+  running: "실행 중",
+  finished: "완료"
+};
+
+const MAX_CONSOLE_CHARS = 24 * 1024;
+
 function App() {
   const [code, setCode] = useState(starterCode);
-  const [stdin, setStdin] = useState("");
   const [standard, setStandard] = useState("c11");
   const [compiler, setCompiler] = useState("gcc");
   const [health, setHealth] = useState(null);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [selectedExample, setSelectedExample] = useState("sum");
-  const stdinRef = useRef(null);
+  const [runState, setRunState] = useState("idle");
+  const [consoleEntries, setConsoleEntries] = useState([]);
+  const [consoleInput, setConsoleInput] = useState("");
+  const wsRef = useRef(null);
+  const consoleInputRef = useRef(null);
+  const consoleEndRef = useRef(null);
 
   useEffect(() => {
     refreshHealth();
   }, []);
+
+  useEffect(() => {
+    return () => {
+      wsRef.current?.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    consoleEndRef.current?.scrollIntoView({ block: "end" });
+  }, [consoleEntries]);
 
   const status = useMemo(() => {
     if (!health) return { label: "확인 중", kind: "pending", icon: Activity };
@@ -82,36 +150,146 @@ function App() {
     }
   }
 
-  async function submit(mode) {
-    if (mode === "run" && usesScanf(code) && stdin.length === 0) {
-      setResult({ ok: false, error: "scanf 입력이 필요합니다. stdin 칸에 값을 직접 입력한 뒤 실행하세요." });
-      stdinRef.current?.focus();
-      return;
-    }
+  async function submitCompile() {
+    if (busy) return;
 
     setBusy(true);
+    setRunState("compiling");
     setResult(null);
+    resetConsole("컴파일 중...\n");
 
     try {
       const response = await fetch("/api/compile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, stdin, mode, standard, compiler })
+        body: JSON.stringify({ code, stdin: "", mode: "compile", standard, compiler })
       });
       const body = await response.json();
       setResult({ ...body, httpStatus: response.status });
+      setConsoleEntries(entriesFromHttpResult(body));
     } catch (error) {
-      setResult({ ok: false, error: error.message || "요청 실패" });
+      const message = error.message || "요청 실패";
+      setResult({ ok: false, error: message });
+      setConsoleEntries([{ kind: "error", text: `${message}\n` }]);
     } finally {
       setBusy(false);
+      setRunState("finished");
       refreshHealth();
+    }
+  }
+
+  function runInteractive() {
+    if (busy) return;
+
+    let finished = false;
+    wsRef.current?.close();
+    setBusy(true);
+    setRunState("connecting");
+    setResult(null);
+    setConsoleInput("");
+    resetConsole("콘솔을 연결하는 중입니다.\n");
+
+    const ws = new WebSocket(interactiveSocketUrl());
+    wsRef.current = ws;
+
+    ws.addEventListener("open", () => {
+      appendConsole("system", "컴파일을 시작합니다.\n");
+      setRunState("compiling");
+      ws.send(JSON.stringify({ type: "start", code, standard, compiler }));
+    });
+
+    ws.addEventListener("message", (event) => {
+      const message = parseSocketMessage(event.data);
+      if (!message) return;
+
+      if (message.type === "state") {
+        if (message.state === "compiling") setRunState("compiling");
+        if (message.state === "running") {
+          setRunState("running");
+          appendConsole("system", "실행 중입니다. 아래 입력칸에서 값을 입력하고 Enter를 누르세요.\n");
+          requestAnimationFrame(() => consoleInputRef.current?.focus());
+        }
+        return;
+      }
+
+      if (message.type === "compile") {
+        if (message.ok) {
+          appendConsole("system", "컴파일 성공.\n");
+        } else {
+          appendConsole("error", "컴파일 실패.\n");
+        }
+        appendConsole("stdout", message.stdout || "");
+        appendConsole("stderr", message.stderr || "");
+        return;
+      }
+
+      if (message.type === "stdout" || message.type === "stderr" || message.type === "system") {
+        appendConsole(message.type, message.data || "");
+        return;
+      }
+
+      if (message.type === "error") {
+        appendConsole("error", `${message.message || "실행 오류"}\n`);
+        return;
+      }
+
+      if (message.type === "done") {
+        finished = true;
+        setBusy(false);
+        setRunState("finished");
+        setResult(message);
+        appendConsole("meta", doneMessage(message));
+        ws.close();
+        refreshHealth();
+      }
+    });
+
+    ws.addEventListener("error", () => {
+      appendConsole("error", "콘솔 연결 중 오류가 발생했습니다.\n");
+    });
+
+    ws.addEventListener("close", () => {
+      if (!finished) {
+        setBusy(false);
+        setRunState("finished");
+        appendConsole("error", "콘솔 연결이 종료되었습니다.\n");
+        refreshHealth();
+      }
+    });
+  }
+
+  function sendConsoleInput() {
+    if (runState !== "running" || wsRef.current?.readyState !== WebSocket.OPEN) return;
+    if (consoleInput.length === 0) return;
+
+    const data = consoleInput.endsWith("\n") ? consoleInput : `${consoleInput}\n`;
+    wsRef.current.send(JSON.stringify({ type: "stdin", data }));
+    appendConsole("stdin", data);
+    setConsoleInput("");
+  }
+
+  function stopInteractive() {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "stop" }));
     }
   }
 
   function loadExample(key) {
     setSelectedExample(key);
     setCode(examples[key]);
-    setStdin("");
+    setConsoleInput("");
+    setConsoleEntries([]);
+    setResult(null);
+    setRunState("idle");
+  }
+
+  function resetConsole(text) {
+    setConsoleEntries([{ kind: "system", text }]);
+  }
+
+  function appendConsole(kind, text) {
+    if (!text) return;
+    setConsoleEntries((entries) => trimConsoleEntries([...entries, { kind, text }]));
   }
 
   const StatusIcon = status.icon;
@@ -155,14 +333,15 @@ function App() {
                 <option value="sum">덧셈</option>
                 <option value="loop">반복문</option>
                 <option value="string">문자열</option>
+                <option value="fuel">차량 비용</option>
               </select>
             </div>
             <div className="toolbar-actions">
-              <button className="secondary-button" type="button" disabled={busy} onClick={() => submit("compile")}>
+              <button className="secondary-button" type="button" disabled={busy} onClick={submitCompile}>
                 <Hammer size={16} aria-hidden="true" />
                 <span>컴파일</span>
               </button>
-              <button className="primary-button" type="button" disabled={busy} onClick={() => submit("run")}>
+              <button className="primary-button" type="button" disabled={busy} onClick={runInteractive}>
                 <Play size={16} aria-hidden="true" />
                 <span>실행</span>
               </button>
@@ -194,29 +373,68 @@ function App() {
         </section>
 
         <aside className="side-pane">
-          <section className="stdin-panel" aria-label="표준 입력">
+          <section className="console-panel" aria-label="콘솔">
             <div className="panel-title">
               <Terminal size={16} aria-hidden="true" />
-              <span>stdin</span>
+              <span>콘솔</span>
+              <div className="panel-meta">
+                <span className={`run-state ${runState}`}>{runStateLabels[runState]}</span>
+                {result?.durationMs != null && <span className="duration">{result.durationMs} ms</span>}
+              </div>
             </div>
-            <textarea
-              ref={stdinRef}
-              value={stdin}
-              onChange={(event) => setStdin(event.target.value)}
-              placeholder="scanf 입력값을 여기에 직접 입력하세요."
-              spellCheck="false"
-              aria-label="표준 입력"
-            />
-          </section>
 
-          <section className="output-panel" aria-label="결과">
-            <div className="panel-title">
-              {result?.ok ? <CheckCircle2 size={16} aria-hidden="true" /> : <Terminal size={16} aria-hidden="true" />}
-              <span>결과</span>
-              {busy && <span className="busy-dot">실행 중</span>}
-              {result?.durationMs != null && <span className="duration">{result.durationMs} ms</span>}
+            <pre className="console-output" role="log" aria-live="polite">
+              {consoleEntries.length === 0 ? (
+                <span className="console-muted">실행 버튼을 누르면 출력이 여기에 표시됩니다.</span>
+              ) : (
+                consoleEntries.map((entry, index) => (
+                  <span className={`console-${entry.kind}`} key={`${index}-${entry.kind}`}>
+                    {entry.text}
+                  </span>
+                ))
+              )}
+              <span ref={consoleEndRef} />
+            </pre>
+
+            <div className="console-input-row">
+              <textarea
+                ref={consoleInputRef}
+                className="console-input"
+                value={consoleInput}
+                onChange={(event) => setConsoleInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    sendConsoleInput();
+                  }
+                }}
+                disabled={runState !== "running"}
+                rows={1}
+                spellCheck="false"
+                aria-label="콘솔 입력"
+                placeholder={runState === "running" ? "값 입력 후 Enter" : "실행 중 여기에 입력"}
+              />
+              <button
+                className="icon-button"
+                type="button"
+                disabled={runState !== "running" || consoleInput.length === 0}
+                onClick={sendConsoleInput}
+                aria-label="콘솔 입력 보내기"
+                title="입력 보내기"
+              >
+                <Send size={16} aria-hidden="true" />
+              </button>
+              <button
+                className="icon-button"
+                type="button"
+                disabled={!busy}
+                onClick={stopInteractive}
+                aria-label="실행 중지"
+                title="실행 중지"
+              >
+                <Square size={15} aria-hidden="true" />
+              </button>
             </div>
-            <Output result={result} health={health} />
           </section>
         </aside>
       </main>
@@ -224,21 +442,11 @@ function App() {
   );
 }
 
-function Output({ result, health }) {
-  if (!result) {
-    return (
-      <div className="empty-output">
-        <span>{health?.docker?.error || "컴파일 또는 실행 결과가 여기에 표시됩니다."}</span>
-      </div>
-    );
-  }
-
+function entriesFromHttpResult(result) {
   if (result.error) {
-    return <pre className="output error">{result.error}</pre>;
+    return [{ kind: "error", text: `${result.error}\n` }];
   }
 
-  const stdout = result.stdout || "";
-  const stderr = result.stderr || "";
   const meta = [
     `runner: ${result.runner}`,
     `compiler: ${result.compiler || "n/a"}`,
@@ -248,22 +456,58 @@ function Output({ result, health }) {
     .filter(Boolean)
     .join(" | ");
 
-  return (
-    <div className="output-stack">
-      <div className={`result-chip ${result.ok ? "ok" : "fail"}`}>{result.ok ? "성공" : "실패"}</div>
-      <pre className="output meta">{meta}</pre>
-      <pre className="output">{stdout || "(stdout 없음)"}</pre>
-      {stderr && <pre className="output stderr">{stderr}</pre>}
-    </div>
-  );
+  return [
+    { kind: result.ok ? "system" : "error", text: result.ok ? "컴파일 성공.\n" : "컴파일 실패.\n" },
+    { kind: "meta", text: `${meta}\n` },
+    { kind: "stdout", text: result.stdout || "" },
+    { kind: "stderr", text: result.stderr || "" }
+  ].filter((entry) => entry.text);
+}
+
+function doneMessage(message) {
+  const duration = message.durationMs != null ? ` (${message.durationMs} ms)` : "";
+  if (message.stopped) return `\n[사용자가 실행을 중지했습니다${duration}]\n`;
+  if (message.timedOut) return `\n[시간 초과로 종료되었습니다${duration}]\n`;
+  if (message.exitCode === 0) return `\n[프로그램이 종료되었습니다${duration}]\n`;
+  return `\n[프로그램이 종료되었습니다: exit ${message.exitCode ?? "n/a"}${duration}]\n`;
+}
+
+function parseSocketMessage(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function interactiveSocketUrl() {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/api/run/interactive`;
+}
+
+function trimConsoleEntries(entries) {
+  let total = 0;
+  const kept = [];
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    const nextTotal = total + entry.text.length;
+    if (nextTotal > MAX_CONSOLE_CHARS) {
+      const remaining = MAX_CONSOLE_CHARS - total;
+      if (remaining > 0) {
+        kept.push({ ...entry, text: entry.text.slice(-remaining) });
+      }
+      break;
+    }
+    total = nextTotal;
+    kept.push(entry);
+  }
+
+  return kept.reverse();
 }
 
 function byteLength(value) {
   return new TextEncoder().encode(value).length;
-}
-
-function usesScanf(value) {
-  return /\bscanf\s*\(/.test(value);
 }
 
 export default App;
