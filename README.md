@@ -31,3 +31,21 @@ ALLOW_LOCAL_GCC=1 npm run dev
 ```
 
 이 모드는 실행을 제공하지 않으며, 공개 서비스에 권장하지 않습니다.
+
+## 서버 배포
+
+서버의 git clone 폴더에서 다음 명령으로 최신 main을 배포합니다.
+
+```bash
+./scripts/deploy.sh
+```
+
+기본 동작은 `git pull`, `npm ci`, `npm run build`, `web-c-compiler.service` 재시작, 헬스체크입니다.
+
+옵션:
+
+```bash
+RUN_TESTS=1 ./scripts/deploy.sh
+RELOAD_NGINX=1 ./scripts/deploy.sh
+SERVICE=web-c-compiler.service ./scripts/deploy.sh
+```
